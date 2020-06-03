@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import random
@@ -7,7 +8,6 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import aiohttp
-import requests
 
 from .templating import render_template
 from .yobot_exceptions import ServerError
@@ -35,17 +35,33 @@ class Consult:
     Nicknames_csv = "https://gitee.com/yobot/pcr-nickname/raw/master/nicknames.csv"
     Nicknames_repo = "https://gitee.com/yobot/pcr-nickname/blob/master/nicknames.csv"
 
-    def __init__(self, glo_setting: dict, *args, refresh_nickfile=False,  **kwargs):
+    def __init__(self, glo_setting: dict, *args, **kwargs):
         self.setting = glo_setting
         self.nickname_dict: Dict[str, Tuple[str, str]] = {}
         nickfile = os.path.join(glo_setting["dirname"], "nickname3.csv")
-        if refresh_nickfile or not os.path.exists(nickfile):
-            res = requests.get(self.Nicknames_csv)
-            if res.status_code != 200:
-                raise ServerError(
-                    "bad server response. code: "+str(res.status_code))
-            with open(nickfile, "w", encoding="utf-8-sig") as f:
-                f.write(res.text)
+        if not os.path.exists(nickfile):
+            asyncio.ensure_future(self.update_nicknames(),
+                                  loop=asyncio.get_event_loop())
+        else:
+            with open(nickfile, encoding="utf-8-sig") as f:
+                csv = f.read()
+                for line in csv.split("\n")[1:]:
+                    row = line.split(",")
+                    for col in row:
+                        self.nickname_dict[col] = (row[0], row[1])
+
+    async def update_nicknames(self):
+        nickfile = os.path.join(self.setting["dirname"], "nickname3.csv")
+        try:
+            async with aiohttp.request('GET', self.Nicknames_csv) as resp:
+                if resp.status != 200:
+                    raise ServerError(
+                        "bad server response. code: "+str(resp.status))
+                restxt = await resp.text()
+                with open(nickfile, "w", encoding="utf-8-sig") as f:
+                    f.write(restxt)
+        except aiohttp.ClientError as e:
+            raise RuntimeError('错误'+str(e))
         with open(nickfile, encoding="utf-8-sig") as f:
             csv = f.read()
             for line in csv.split("\n")[1:]:
@@ -66,6 +82,7 @@ class Consult:
                 if is_retry:
                     msg = "没有找到【{}】，目前昵称表：{}".format(
                         index, self.Nicknames_repo)
+                    asyncio.ensure_future(self.update_nicknames())
                     raise ValueError(msg)
                 else:
                     self.__init__(self.setting, refresh_nickfile=True)
@@ -85,7 +102,7 @@ class Consult:
                 result = await self.search_pcrdfans_async(def_lst, region)
             else:
                 return f"错误的配置项：{search_source}"
-        except (RuntimeError,ValueError) as e:
+        except (RuntimeError, ValueError) as e:
             return str(e)
 
         if len(result) == 0:
@@ -214,73 +231,6 @@ class Consult:
         result = search['data']['result']
         return list(map(self._parse_pcrdfans_team, result))
 
-    def get_this_season(self, rank):
-        """
-        this_season[1:11] = 50
-        this_season[11:101] = 10
-        this_season[101:201] = 5
-        this_season[201:501] = 3
-        this_season[501:2001] = 2
-        this_season[2001:4000] = 1
-        this_season[4000:8000:100] = 50
-        this_season[8100:15001:100] = 15
-        """
-        if rank <= 11:
-            return 50 *(rank-1)
-        elif rank <= 101:
-            return 10*(rank-11) + 50*10
-        elif rank <= 201:
-            return 5*(rank-101) + 10*90 + 50*10
-        elif rank <= 501:
-            return 3*(rank-201) + 5*100 +10*90 + 50*10
-        elif rank <= 2001:
-            return 2*(rank-501) + 3*300 + 5*100 +10*90 + 50*10
-        elif rank <= 4000:
-            return 1*(rank-2001) + 2*1500 + 3*300 + 5*100 +10*90 + 50*10
-        elif rank <= 8000:
-            return (rank-4000)//100*50 + 1*1999 + 2*1500 + 3*300 + 5*100 +10*90 + 50*10
-        else:
-            return (rank-8001)//100*15 + 40*50 + 1*1999 + 2*1500 + 3*300 + 5*100 +10*90 + 50*10
-    def get_all_season(self, rank):
-        """
-        all_season[1:11] = 500
-        all_season[11:101] = 50
-        all_season[101:201] = 30
-        all_season[201:501] = 10
-        all_season[501:1001] = 5
-        all_season[1001:2001] = 3
-        all_season[2001:4001] = 2
-        all_season[4001:7999] = 1
-        all_season[8100:15001:100] = 30
-        """
-        if rank <= 11:
-            return 500 *(rank-1)
-        elif rank <= 101:
-            return 50*(rank-11) + 500*10
-        elif rank <= 201:
-            return 30*(rank-101) + 50*90 + 500*10
-        elif rank <= 501:
-            return 10*(rank-201) + 30*100 +50*90 + 500*10
-        elif rank <= 1001:
-            return 5* (rank-501) + 10*300 + 30*100 +50*90 + 500*10
-        elif rank <= 2001:
-            return 3*(rank-1001) + 5*500 + 10*300 + 30*100 +50*90 + 500*10
-        elif rank <= 4001:
-            return 2*(rank-2001) + 3*1000 + 5*500 + 10*300 + 30*100 +50*90 + 500*10
-        elif rank <= 7999:
-            return (rank-4001) + 2*2000 + 3*1000 + 5*500 + 10*300 + 30*100 +50*90 + 500*10
-        else:
-            return (rank-8001)//100*30 + 3998 + 2*2000 + 3*1000 + 5*500 + 10*300 + 30*100 +50*90 + 500*10
-    def miner(self, cmd: str):
-        cmd = cmd.lstrip()
-        if cmd.isdigit() and 15001 >= int(cmd) >= 1:
-            rank = int(cmd)
-            reply = "当前排名为:{}\n最高排名奖励还剩 {} 钻\n历届最高排名还剩 {} 钻".format(rank, self.get_this_season(rank), self.get_all_season(rank))
-            return reply
-        else:
-            reply = "请输入1～15001之间的整数"
-            return reply
-
     @staticmethod
     def match(cmd: str) -> int:
         if not cmd.startswith("jjc"):
@@ -295,8 +245,6 @@ class Consult:
             return 3
         elif cmd.startswith("jjc日服"):
             return 4
-        elif cmd.startswith("jjc钻石"):
-            return 6
         else:
             return 0
 
@@ -308,8 +256,6 @@ class Consult:
             return None
         elif match_num == 5:
             reply = "请接5个昵称，空格分隔"
-        elif match_num == 6:
-            reply = self.miner(msg["raw_message"][5:])
         else:
             try:
                 anlz = self.user_input(msg["raw_message"][5:])

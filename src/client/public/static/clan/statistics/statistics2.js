@@ -155,10 +155,15 @@ var vm = new Vue({
                 }
                 that.allChallenges = res.data.challenges;
                 that.members = res.data.members;
+                if (that.members.filter((elem) => {return elem.qqid == that.selectingQQid}).length == 0) {
+                    that.selectingQQid = that.members[0].qqid;
+                }
                 that.refreshData();
-            // }).catch(function (error) {
-            //     thisvue.$alert(error, '获取数据失败');
-            //     thisvue.isLoading = false;
+            }).catch(function (error) {
+                that.$alert(error, '获取数据失败，请联系维护人员');
+                that.isLoading = false;
+                console.error(error);
+                console.error(error.stack);
             });
         },
 
@@ -604,7 +609,10 @@ var vm = new Vue({
             this.sumDmgChart.setOption(option3);
             this.missChart.setOption(option4);
             this.lastChart.setOption(option5);
-            this.bossBloodChart.setOption(option6);
+            try{
+                // 这里有时会出现一个错误，原因未知
+                this.bossBloodChart.setOption(option6);
+            }catch(e){console.error(e)}
             this.totalTimeChart.setOption(option7);
             this.bossHitChart.setOption(option8);
             this.totalDamageChart.setOption(option9);
@@ -634,7 +642,7 @@ var vm = new Vue({
                         if (clist[i].health_ramain != 0) {
                             damage = clist[i].damage;
                         } 
-                        else if (clist[i+1]?.is_continue) {
+                        else if (clist[i+1] && clist[i+1].is_continue) {
                             damage = clist[i].damage + clist[i+1].damage
                             i++;
                         }
@@ -942,7 +950,8 @@ var vm = new Vue({
             if (nowBoss && lastPosition) {
                 bosses.push({
                     gte: lastPosition,
-                    color: this.colorList[nowBoss - 1]
+                    color: this.colorList[nowBoss - 1],
+                    label: `${lastCircle}周目${nowBoss}王`
                 });
             }
             return [challs.map(c => [c.challenge_time * 1000, c.health_ramain]), bosses];
